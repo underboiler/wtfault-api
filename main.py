@@ -1,11 +1,15 @@
 from flask import Flask, request, jsonify
-import openai
 import os
+from openai import OpenAI
 from flask_cors import CORS
 
 app = Flask(__name__)
 CORS(app)
-openai.api_key = os.environ.get("OPENAI_API_KEY")
+
+# Use new OpenAI 1.x client
+client = OpenAI(
+    api_key=os.environ.get("OPENAI_API_KEY")
+)
 
 @app.route("/analyze-job", methods=["POST"])
 def analyze_job():
@@ -43,11 +47,12 @@ Please provide:
 - Common fixes or procedures
 """
 
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4-turbo",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=500
         )
+
         result = response.choices[0].message.content.strip()
         return jsonify({"result": result})
 
