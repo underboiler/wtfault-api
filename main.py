@@ -1,23 +1,34 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 import os
-import base64
+import time
 import traceback
 from flask_cors import CORS
 from openai import OpenAI
 
+# Initialize Flask app
 app = Flask(__name__)
 CORS(app)
 
-# ✅ Your OpenAI API key (use Render environment variables)
+# Configure OpenAI API
 client = OpenAI(
     api_key=os.environ.get("OPENAI_API_KEY")
 )
 
+# Setup upload directory
+UPLOAD_FOLDER = "static"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# Serve static files (uploaded images)
+@app.route('/static/<path:filename>')
+def static_files(filename):
+    return send_from_directory(UPLOAD_FOLDER, filename)
+
+# Health check route
 @app.route("/", methods=["GET"])
 def index():
     return "✅ WTFault API is live."
 
-# ✅ For structured TEXT jobs (VIN, DTCs, PIDs typed manually)
+# Text-based job (VIN, DTCs, PIDs from app)
 @app.route("/analyze-job", methods=["POST"])
 def analyze_job():
     try:
@@ -49,17 +60,12 @@ Live Sensor Data:
 Technician Notes:
 {notes_text}
 
-Extracted OCR Text from Image or Screenshot:
+Extracted OCR Text:
 {ocr_text_block}
 
 ---
-Please provide:
-- Detailed fault analysis
-- Suggested tests
-- Recommended repairs
-- Any extra expert tips
-
-IMPORTANT: Write full paragraphs, not just headings.
+Please provide a full detailed diagnosis, suggested tests, repair advice, and extra expert tips.
+IMPORTANT: Write complete paragraphs, not just headings.
 """
 
         response = client.chat.completions.create(
@@ -75,7 +81,7 @@ IMPORTANT: Write full paragraphs, not just headings.
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
-# ✅ For IMAGE jobs (screenshots, photos uploaded)
+# Image-based job (screenshots/photos)
 @app.route("/analyze-image", methods=["POST"])
 def analyze_image():
     try:
@@ -86,25 +92,32 @@ def analyze_image():
         registration = request.form.get('registration', 'UNKNOWN-REG')
         notes = request.form.get('notes', '')
 
-        # Read image file and encode to Base64
-        image_bytes = image.read()
-        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+        # Save uploaded image to /static/ with unique filename
+        timestamp = int(time.time())
+        filename = f"snap_{timestamp}_{image.filename}"
+        filepath = os.path.join(UPLOAD_FOLDER, filename)
+        image.save(filepath)
+
+        # Build public URL to uploaded image
+        server_base_url = "https://wtfault-api.onrender.com"
+        image_url = f"{server_base_url}/static/{filename}"
 
         prompt_text = f"""
-Analyze this automotive diagnostic screenshot.
+Analyze this uploaded automotive diagnostic screenshot.
+
 Registration: {registration}
-Notes: {notes}
+Technician Notes: {notes}
 
-Extract:
-- Vehicle VIN
-- All DTC fault codes
-- Any live sensor readings
-- Summary of possible issues and recommended actions.
+Extract and clearly explain:
+- VIN (Vehicle Identification Number)
+- DTC fault codes (Diagnostic Trouble Codes)
+- Live sensor data readings
+- A full summary of possible root causes and recommended actions.
 
-Format your reply cleanly.
+Respond in full sentences and organized sections.
 """
 
-        # Send to GPT-4V
+        # Send to OpenAI with image_url
         response = client.chat.completions.create(
             model="gpt-4-turbo-2024-04-09",
             messages=[
@@ -112,7 +125,7 @@ Format your reply cleanly.
                     "role": "user",
                     "content": [
                         {"type": "text", "text": prompt_text},
-                        {"type": "image", "image": {"base64": image_base64}}
+                        {"type": "image_url", "image_url": {"url": image_url}}
                     ]
                 }
             ],
@@ -121,35 +134,12 @@ Format your reply cleanly.
 
         result_text = response.choices[0].message.content.strip()
 
-        # Now parse simple fields out of result (optional basic parsing)
-        vin_guess = "UNKNOWN"
-        dtc_list = []
-        live_data = {}
-
-        lines = result_text.splitlines()
-        for line in lines:
-            line = line.strip()
-            if len(line) == 17 and line.isalnum():
-                vin_guess = line.upper()
-            if line.upper().startswith(("P", "U", "C", "B")) and len(line) >= 5:
-                dtc_list.append(line.upper())
-            if ":" in line:
-                parts = line.split(":")
-                if len(parts) == 2:
-                    key = parts[0].strip()
-                    value = parts[1].strip()
-                    live_data[key] = value
-
-        return jsonify({
-            "vin": vin_guess,
-            "dtcs": dtc_list,
-            "live_data": live_data,
-            "summary": result_text
-        })
+        return jsonify({"result": result_text})
 
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+# Start server
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
