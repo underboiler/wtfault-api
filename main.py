@@ -19,10 +19,12 @@ def analyze_job():
         dtcs = data.get("dtcs", [])
         pids = data.get("pids", {})
         notes = data.get("notes", "")
+        ocr_text = data.get("ocr_text", "")  # ✅ New field for OCR extracted text
 
         dtc_block = "\n".join(f"- {code}" for code in dtcs) if dtcs else "None"
         pid_block = "\n".join(f"{k}: {v}" for k, v in pids.items()) if pids else "None"
         notes_text = notes if notes.strip() else "None"
+        ocr_text_block = ocr_text if ocr_text.strip() else "None"
 
         prompt = f"""
 You are a professional vehicle diagnostics AI for WTFault app.
@@ -38,6 +40,9 @@ Live Sensor Data:
 
 Technician Notes:
 {notes_text}
+
+Extracted OCR Text from Image or Screenshot:
+{ocr_text_block}
 
 ---
 Now, please provide a FULL detailed diagnostic analysis including:
