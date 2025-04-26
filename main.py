@@ -6,7 +6,6 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
-# Use new OpenAI 1.x client
 client = OpenAI(
     api_key=os.environ.get("OPENAI_API_KEY")
 )
@@ -26,31 +25,34 @@ def analyze_job():
         notes_text = notes if notes.strip() else "None"
 
         prompt = f"""
-WTFault AI Diagnostic Request
-------------------------------
-VIN: {vin}
-REG: {reg}
+You are a professional vehicle diagnostics AI for WTFault app.
 
-❗ Fault Codes:
+VIN: {vin}
+Registration: {reg}
+
+Fault Codes:
 {dtc_block}
 
-📊 Live Sensor Data:
+Live Sensor Data:
 {pid_block}
 
-📝 Notes:
+Technician Notes:
 {notes_text}
 
 ---
-Please provide:
-- Root cause analysis
-- Testing suggestions
-- Common fixes or procedures
+Now, please provide a FULL detailed diagnostic analysis including:
+- Root cause explanation (not just a heading)
+- Suggested tests
+- Possible repairs
+- Extra tips if applicable
+
+IMPORTANT: Do not just list headings. Write full paragraphs for each section.
 """
 
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=500
+            max_tokens=1000
         )
 
         result = response.choices[0].message.content.strip()
