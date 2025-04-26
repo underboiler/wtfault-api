@@ -1,15 +1,23 @@
 from flask import Flask, request, jsonify
 import os
-from openai import OpenAI
+import base64
+import traceback
 from flask_cors import CORS
+from openai import OpenAI
 
 app = Flask(__name__)
 CORS(app)
 
+# ✅ Your OpenAI API key (use Render environment variables)
 client = OpenAI(
     api_key=os.environ.get("OPENAI_API_KEY")
 )
 
+@app.route("/", methods=["GET"])
+def index():
+    return "✅ WTFault API is live."
+
+# ✅ For structured TEXT jobs (VIN, DTCs, PIDs typed manually)
 @app.route("/analyze-job", methods=["POST"])
 def analyze_job():
     try:
@@ -19,7 +27,7 @@ def analyze_job():
         dtcs = data.get("dtcs", [])
         pids = data.get("pids", {})
         notes = data.get("notes", "")
-        ocr_text = data.get("ocr_text", "")  # ✅ New field for OCR extracted text
+        ocr_text = data.get("ocr_text", "")
 
         dtc_block = "\n".join(f"- {code}" for code in dtcs) if dtcs else "None"
         pid_block = "\n".join(f"{k}: {v}" for k, v in pids.items()) if pids else "None"
@@ -45,13 +53,13 @@ Extracted OCR Text from Image or Screenshot:
 {ocr_text_block}
 
 ---
-Now, please provide a FULL detailed diagnostic analysis including:
-- Root cause explanation (not just a heading)
+Please provide:
+- Detailed fault analysis
 - Suggested tests
-- Possible repairs
-- Extra tips if applicable
+- Recommended repairs
+- Any extra expert tips
 
-IMPORTANT: Do not just list headings. Write full paragraphs for each section.
+IMPORTANT: Write full paragraphs, not just headings.
 """
 
         response = client.chat.completions.create(
@@ -64,7 +72,82 @@ IMPORTANT: Do not just list headings. Write full paragraphs for each section.
         return jsonify({"result": result})
 
     except Exception as e:
-        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+# ✅ For IMAGE jobs (screenshots, photos uploaded)
+@app.route("/analyze-image", methods=["POST"])
+def analyze_image():
+    try:
+        if 'image' not in request.files:
+            return jsonify({"error": "No image uploaded"}), 400
+
+        image = request.files['image']
+        registration = request.form.get('registration', 'UNKNOWN-REG')
+        notes = request.form.get('notes', '')
+
+        # Read image file and encode to Base64
+        image_bytes = image.read()
+        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+
+        prompt_text = f"""
+Analyze this automotive diagnostic screenshot.
+Registration: {registration}
+Notes: {notes}
+
+Extract:
+- Vehicle VIN
+- All DTC fault codes
+- Any live sensor readings
+- Summary of possible issues and recommended actions.
+
+Format your reply cleanly.
+"""
+
+        # Send to GPT-4V
+        response = client.chat.completions.create(
+            model="gpt-4-vision-preview",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt_text},
+                        {"type": "image", "image": {"base64": image_base64}}
+                    ]
+                }
+            ],
+            max_tokens=1000
+        )
+
+        result_text = response.choices[0].message.content.strip()
+
+        # Now parse simple fields out of result (optional basic parsing)
+        vin_guess = "UNKNOWN"
+        dtc_list = []
+        live_data = {}
+
+        lines = result_text.splitlines()
+        for line in lines:
+            line = line.strip()
+            if len(line) == 17 and line.isalnum():
+                vin_guess = line.upper()
+            if line.upper().startswith(("P", "U", "C", "B")) and len(line) >= 5:
+                dtc_list.append(line.upper())
+            if ":" in line:
+                parts = line.split(":")
+                if len(parts) == 2:
+                    key = parts[0].strip()
+                    value = parts[1].strip()
+                    live_data[key] = value
+
+        return jsonify({
+            "vin": vin_guess,
+            "dtcs": dtc_list,
+            "live_data": live_data,
+            "summary": result_text
+        })
+
+    except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
